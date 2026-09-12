@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.product import Product
+from app.models.user import User
+from app.utils.dependencies import require_admin
 from app.schemas.product import ProductCreate, ProductResponse
 
 
@@ -11,11 +13,12 @@ router = APIRouter(
     tags=["Products"]
 )
 
-
+#### POST api ####
 @router.post("/", response_model=ProductResponse)
 def create_product(
     product: ProductCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
 ):
     existing_product = (
         db.query(Product)
@@ -47,14 +50,14 @@ def create_product(
 
     return new_product
 
-
+#### GET api ####
 @router.get("/", response_model=list[ProductResponse])
 def get_products(
     db: Session = Depends(get_db)
 ):
     return db.query(Product).all()
 
-
+#### GET particulat item api ####
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
     product_id: int,
@@ -73,3 +76,80 @@ def get_product(
         )
 
     return product
+
+#### Update PUT api ####
+@router.put("/{product_id}", response_model=ProductResponse)
+def update_product(
+    product_id: int,
+    product: ProductCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    existing_product = (
+        db.query(Product)
+        .filter(Product.id == product_id)
+        .first()
+    )
+
+    if not existing_product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    # Check whether SKU belongs to another product
+    duplicate_sku = (
+        db.query(Product)
+        .filter(
+            Product.sku == product.sku,
+            Product.id != product_id
+        )
+        .first()
+    )
+
+    if duplicate_sku:
+        raise HTTPException(
+            status_code=400,
+            detail="Product with this SKU already exists"
+        )
+
+    existing_product.name = product.name
+    existing_product.description = product.description
+    existing_product.price = product.price
+    existing_product.sku = product.sku
+    existing_product.category = product.category
+    existing_product.image_url = product.image_url
+    existing_product.rating = product.rating
+    existing_product.stock_quantity = product.stock_quantity
+
+    db.commit()
+    db.refresh(existing_product)
+
+    return existing_product
+
+#### DELETE api ####
+@router.delete("/{product_id}")
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    product = (
+        db.query(Product)
+        .filter(Product.id == product_id)
+        .first()
+    )
+
+    if not product:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    db.delete(product)
+    db.commit()
+
+    return {
+        "message": "Product deleted successfully",
+        "product_id": product_id
+    }
